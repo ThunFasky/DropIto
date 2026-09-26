@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# PyInstaller の成果物
+build/
+dist/
+*.spec
+
+# build.py --download-tools で取得する外部ツール (ffmpeg / ffprobe / deno)
+bin/
