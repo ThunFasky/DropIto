@@ -55,6 +55,7 @@ class Settings:
     embed_thumbnail: bool = True
     playlist: bool = False
     cookies_browser: str = ""  # "" = 使わない
+    filename_with_url: bool = True  # ファイル名を「タイトル -ダウンロード元URL」にする
     appearance: str = "dark"  # "dark" / "light" / "system"
 
     @classmethod

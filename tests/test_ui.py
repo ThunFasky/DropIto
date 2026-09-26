@@ -108,11 +108,13 @@ def test_settings_roundtrip(app, tmp_path):
     app._on_quality_change("192kbps (標準)")
     app.cookie_menu.set("Firefox")
     app.output_var.set(str(tmp_path))
+    assert app.url_name_var.get() is True  # 既定はオン
+    app.url_name_var.set(False)
     app._save_settings()
 
     loaded = Settings.load()
-    assert (loaded.media_type, loaded.audio_bitrate, loaded.cookies_browser, loaded.output_dir) == (
-        "mp3", 192, "firefox", str(tmp_path))
+    assert (loaded.media_type, loaded.audio_bitrate, loaded.cookies_browser, loaded.output_dir,
+            loaded.filename_with_url) == ("mp3", 192, "firefox", str(tmp_path), False)
 
 
 def test_stage_change_is_not_coalesced_away(app):
@@ -130,3 +132,17 @@ def test_stage_change_is_not_coalesced_away(app):
     assert "500.0 KB / 500.0 KB" in app.detail_label.cget("text")
     assert app.status_label.cget("text") == "ファイルを修正中…"
     app._task = None
+
+
+def test_completion_does_not_ask_to_open_folder(app, tmp_path):
+    import ui
+
+    saved = tmp_path / "video.mp4"
+    saved.write_bytes(b"")
+    app._task = type("FakeTask", (), {"cancel_requested": False})()
+    app._on_download_finished(ui.DownloadResult(ui.Outcome.COMPLETED, files=[str(saved)]))
+    assert app.status_label.cget("text") == "完了しました"
+    kinds = [kind for kind, _ in app.popups]
+    assert kinds == ["showinfo"]  # 「フォルダーを開きますか？」の確認は出さない
+    title, message = app.popups[0][1]
+    assert title == "ダウンロード完了" and "video.mp4" in message and "開きますか" not in message

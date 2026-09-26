@@ -257,6 +257,7 @@ class DropItoApp(ctk.CTk):
         self.h264_var = tk.BooleanVar()
         self.embed_var = tk.BooleanVar()
         self.playlist_var = tk.BooleanVar()
+        self.url_name_var = tk.BooleanVar()
         check_opts = {"font": self.font_small, "checkbox_width": 20, "checkbox_height": 20}
         self.h264_check = ctk.CTkCheckBox(
             checks, text="H.264 優先 (AviUtl など編集ソフト向け)", variable=self.h264_var, **check_opts)
@@ -268,6 +269,9 @@ class DropItoApp(ctk.CTk):
             checks, text="プレイリスト全体をダウンロード", variable=self.playlist_var,
             command=lambda: self._schedule_preview(delay=0), **check_opts)
         self.playlist_check.grid(row=1, column=0, sticky="w")
+        self.url_name_check = ctk.CTkCheckBox(
+            checks, text="ファイル名にダウンロード元 URL を付ける", variable=self.url_name_var, **check_opts)
+        self.url_name_check.grid(row=1, column=1, sticky="w")
 
         ctk.CTkLabel(opts, text="Cookie", **label_opts).grid(row=2, **head)
         cookie_row = ctk.CTkFrame(opts, fg_color="transparent")
@@ -368,6 +372,7 @@ class DropItoApp(ctk.CTk):
         self.h264_var.set(s.prefer_h264)
         self.embed_var.set(s.embed_thumbnail)
         self.playlist_var.set(s.playlist)
+        self.url_name_var.set(s.filename_with_url)
         self.cookie_menu.set(self._label_for(COOKIE_BROWSERS, s.cookies_browser, "使用しない"))
         self.appearance_menu.set(self._label_for(APPEARANCES, s.appearance, "ダーク"))
         self.output_var.set(s.output_dir)
@@ -380,6 +385,7 @@ class DropItoApp(ctk.CTk):
         s.prefer_h264 = self.h264_var.get()
         s.embed_thumbnail = self.embed_var.get()
         s.playlist = self.playlist_var.get()
+        s.filename_with_url = self.url_name_var.get()
         s.cookies_browser = COOKIE_BROWSERS[self.cookie_menu.get()]
         s.appearance = APPEARANCES[self.appearance_menu.get()]
         s.output_dir = self.output_var.get().strip() or s.output_dir
@@ -593,6 +599,7 @@ class DropItoApp(ctk.CTk):
             prefer_h264=s.prefer_h264,
             embed_thumbnail=s.embed_thumbnail,
             playlist=s.playlist,
+            filename_with_url=s.filename_with_url,
             cookies_browser=s.cookies_browser or None,
         )
         self._task = DownloadTask(
@@ -621,7 +628,7 @@ class DropItoApp(ctk.CTk):
         state = "disabled" if busy else "normal"
         for widget in (
             self.url_entry, self.paste_btn, self.clear_btn, self.format_switch, self.quality_menu,
-            self.h264_check, self.embed_check, self.playlist_check, self.cookie_menu,
+            self.h264_check, self.embed_check, self.playlist_check, self.url_name_check, self.cookie_menu,
             self.output_entry, self.browse_btn, self.download_btn,
         ):
             widget.configure(state=state)
@@ -685,15 +692,8 @@ class DropItoApp(ctk.CTk):
             names = "\n".join(os.path.basename(p) for p in result.files[:5])
             if len(result.files) > 5:
                 names += f"\n…ほか {len(result.files) - 5} 件"
-            if messagebox.askyesno(
-                "ダウンロード完了",
-                f"{len(result.files)} 件のファイルを保存しました。\n\n{names}\n\n保存先フォルダーを開きますか？",
-                parent=self,
-            ):
-                try:
-                    reveal_in_file_manager(result.files[0])
-                except OSError as exc:
-                    messagebox.showerror("フォルダーを開けません", str(exc), parent=self)
+            messagebox.showinfo(
+                "ダウンロード完了", f"{len(result.files)} 件のファイルを保存しました。\n\n{names}", parent=self)
         elif result.outcome is Outcome.CANCELLED:
             self.progress.set(0)
             self.percent_label.configure(text="")

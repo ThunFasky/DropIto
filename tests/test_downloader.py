@@ -88,6 +88,24 @@ class TestOptions:
         # 既存の MP4 を変換元として消さないための設定
         assert opts["keepvideo"] is True and opts["final_ext"] == "mp3"
 
+    def test_filename_template(self):
+        plain = dl.build_ydl_options(DownloadRequest("https://a.b/c", "."), ffmpeg_path="ffmpeg")
+        with_url = dl.build_ydl_options(DownloadRequest("https://a.b/c", ".", filename_with_url=True), ffmpeg_path="ffmpeg")
+        assert plain["outtmpl"]["default"] == "%(title).120B [%(id)s].%(ext)s"
+        assert with_url["outtmpl"]["default"] == "%(title).80B -%(webpage_url).100B.%(ext)s"
+
+    def test_filename_with_url_is_windows_safe(self):
+        import yt_dlp
+
+        req = DownloadRequest("https://a.b/c", "out", filename_with_url=True)
+        opts = {**dl.build_ydl_options(req, ffmpeg_path="ffmpeg"), "windowsfilenames": True}
+        info = {"id": "1", "title": "動画: テスト?", "ext": "mp4",
+                "webpage_url": "https://www.youtube.com/watch?v=jNQXAC9IVRw"}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            name = os.path.basename(ydl.prepare_filename(info))
+        assert name == "動画： テスト？ -https：⧸⧸www.youtube.com⧸watch？v=jNQXAC9IVRw.mp4"
+        assert not set('/:?*"<>|\\') & set(name)
+
     def test_cookies_and_playlist(self):
         req = DownloadRequest("https://a.b/c", ".", cookies_browser="firefox", playlist=True)
         opts = dl.build_ydl_options(req, ffmpeg_path="ffmpeg")
@@ -319,6 +337,16 @@ class TestDownload:
         # サムネイルが埋め込まれ、単体の画像ファイルは残らない
         assert any(s.get("disposition", {}).get("attached_pic") for s in ffprobe(path)["streams"])
         assert sorted(os.listdir(tmp_path)) == [os.path.basename(path)]
+
+    def test_x_filename_with_source_url(self, tmp_path):
+        req = DownloadRequest(X_URL, str(tmp_path), embed_thumbnail=False, filename_with_url=True)
+        result, _, _ = run_task(req)
+        assert result.outcome is Outcome.COMPLETED, result.error
+        name = os.path.basename(result.files[0])
+        assert name.startswith("Captain America - ")
+        assert " -https" in name and "x.com⧸captainamerica⧸status⧸719944021058060289" in name
+        assert name.endswith(".mp4")
+        assert os.listdir(tmp_path) == [name]
 
     def test_x_mp3_leaves_only_mp3(self, tmp_path):
         result, _, _ = run_task(DownloadRequest(X_URL, str(tmp_path), media_type=MediaType.AUDIO))

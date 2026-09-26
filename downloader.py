@@ -41,6 +41,10 @@ from yt_dlp.utils import DownloadCancelled
 #: パス長上限 (260 文字) に収まるように
 OUTPUT_TEMPLATE = "%(title).120B [%(id)s].%(ext)s"
 
+#: 「タイトル -ダウンロード元URL」形式。URL の / : ? は Windows で使えないので
+#: yt-dlp が全角 (⧸ ： ？) に置き換える。パス長に収まるようタイトル 80 / URL 100 バイトで切る
+OUTPUT_TEMPLATE_WITH_URL = "%(title).80B -%(webpage_url).100B.%(ext)s"
+
 #: Cookie を読み込めるブラウザ (yt-dlp の --cookies-from-browser と同じ名前)
 SUPPORTED_BROWSERS = ("firefox", "chrome", "edge", "brave", "opera", "vivaldi", "chromium")
 
@@ -140,6 +144,7 @@ class DownloadRequest:
     embed_thumbnail: bool = True  # サムネイルとメタデータを埋め込む
     playlist: bool = False  # プレイリスト全体を保存
     cookies_browser: Optional[str] = None
+    filename_with_url: bool = False  # ファイル名を「タイトル -ダウンロード元URL」にする
 
 
 @dataclass
@@ -255,6 +260,10 @@ def build_format_selection(request: DownloadRequest, has_ffmpeg: bool = True) ->
     return fmt, sort
 
 
+def output_template(request: DownloadRequest) -> str:
+    return OUTPUT_TEMPLATE_WITH_URL if request.filename_with_url else OUTPUT_TEMPLATE
+
+
 def build_postprocessors(request: DownloadRequest) -> list:
     pps = []
     if request.media_type is MediaType.AUDIO:
@@ -279,7 +288,7 @@ def build_ydl_options(
     opts = {
         "format": fmt,
         "paths": {"home": request.output_dir},
-        "outtmpl": {"default": OUTPUT_TEMPLATE, "pl_thumbnail": ""},
+        "outtmpl": {"default": output_template(request), "pl_thumbnail": ""},
         "noplaylist": not request.playlist,
         "postprocessors": build_postprocessors(request),
         "writethumbnail": request.embed_thumbnail,
@@ -760,6 +769,7 @@ def _cli(argv: Optional[list] = None) -> int:
     parser.add_argument("--no-embed", action="store_true", help="サムネイル/メタデータを埋め込まない")
     parser.add_argument("--playlist", action="store_true", help="プレイリスト全体を保存")
     parser.add_argument("--cookies-from-browser", choices=SUPPORTED_BROWSERS)
+    parser.add_argument("--url-in-name", action="store_true", help="ファイル名を「タイトル -ダウンロード元URL」にする")
     parser.add_argument("--info", action="store_true", help="情報を表示するだけ")
     args = parser.parse_args(argv)
 
@@ -797,6 +807,7 @@ def _cli(argv: Optional[list] = None) -> int:
         embed_thumbnail=not args.no_embed,
         playlist=args.playlist,
         cookies_browser=args.cookies_from_browser,
+        filename_with_url=args.url_in_name,
     )
     result = DownloadTask(request, on_progress=progress, on_log=log).run()
     print()
