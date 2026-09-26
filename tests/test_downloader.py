@@ -143,6 +143,7 @@ class TestHelpers:
         ("could not find firefox cookies database in C:\\x", "ブラウザの Cookie が見つかりませんでした"),
         ("Could not copy Chrome cookie database. See https://...", "ブラウザの Cookie を読み込めませんでした"),
         ("unable to download video data: HTTP Error 403: Forbidden", "サーバーにアクセスを拒否されました"),
+        ("Postprocessing: WARNING: unable to obtain file audio codec with ffprobe", "この動画には音声トラックがない"),
     ])
     def test_humanize_error_cookie_and_http(self, raw, hint):
         assert dl.humanize_error(raw).startswith(hint)
@@ -318,6 +319,13 @@ class TestDownload:
         # サムネイルが埋め込まれ、単体の画像ファイルは残らない
         assert any(s.get("disposition", {}).get("attached_pic") for s in ffprobe(path)["streams"])
         assert sorted(os.listdir(tmp_path)) == [os.path.basename(path)]
+
+    def test_x_mp3_leaves_only_mp3(self, tmp_path):
+        result, _, _ = run_task(DownloadRequest(X_URL, str(tmp_path), media_type=MediaType.AUDIO))
+        assert result.outcome is Outcome.COMPLETED, result.error
+        (mp3,) = result.files
+        # 変換元の動画や作業フォルダーが保存先に残らないこと (リグレッション)
+        assert os.listdir(tmp_path) == [os.path.basename(mp3)]
 
     def test_x_mp3_320k_keeps_existing_mp4(self, tmp_path):
         mp4 = run_task(DownloadRequest(X_URL, str(tmp_path), embed_thumbnail=False))[0]

@@ -77,6 +77,7 @@ _ERROR_HINTS = (
     ("Private video", "非公開の動画です。"),
     ("Video unavailable", "動画を利用できません (削除・非公開・地域制限など)。"),
     ("No video could be found", "このポストには動画が含まれていません。"),
+    ("unable to obtain file audio codec", "この動画には音声トラックがないため、MP3 にできません。"),
     ("HTTP Error 429", "アクセスが集中しています (HTTP 429)。時間をおいて再試行してください。"),
     ("HTTP Error 403", "サーバーにアクセスを拒否されました (HTTP 403)。yt-dlp を最新版にする・deno を入れる・Cookie を指定する、のいずれかで直る場合があります。"),
     ("Failed to decrypt with DPAPI", "Chrome 系ブラウザの Cookie を復号できませんでした。Firefox の利用をおすすめします。"),
@@ -298,8 +299,8 @@ def build_ydl_options(
         # 既に同名の .mp3 があれば再ダウンロードしない
         opts["final_ext"] = "mp3"
         # 変換元を yt-dlp に消させない。同じ動画を MP4 で保存済みだと、それを
-        # 変換元として拾って削除してしまうため。今回落とした変換元は作業フォルダーに
-        # あるので、DownloadTask が作業フォルダーごと消す
+        # 変換元として拾って削除してしまうため。keepvideo だと今回落とした変換元も
+        # 保存先へ移動されるので、それは DownloadTask が完了後に消す
         opts["keepvideo"] = True
     if ffmpeg_path:
         opts["ffmpeg_location"] = ffmpeg_path
@@ -501,6 +502,7 @@ class DownloadTask:
         self._cancel_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._last_emit = 0.0
+        self._downloaded_names: set = set()  # 今回ダウンロードしたファイル名 (MP3 の変換元の掃除用)
         self.result: Optional[DownloadResult] = None
 
     # -- 公開 API ------------------------------------------------------------
@@ -554,6 +556,7 @@ class DownloadTask:
         # 完成品だけが保存先へ移動される。成功・失敗・キャンセルのどれでも最後に丸ごと消す。
         # 保存先と同じドライブに作るので、完成品の移動は一瞬で終わる
         _remove_stale_temp_dirs(request.output_dir)
+        existing_names = set(os.listdir(request.output_dir))
         try:
             temp_dir = tempfile.mkdtemp(prefix=TEMP_DIR_PREFIX, dir=request.output_dir)
         except OSError as exc:
@@ -575,6 +578,8 @@ class DownloadTask:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
         files = self._collect_files(info)
+        if request.media_type is MediaType.AUDIO:
+            self._remove_conversion_sources(existing_names, files)
         if not files:
             return DownloadResult(Outcome.FAILED, error="ファイルを保存できませんでした。ログを確認してください。")
         return DownloadResult(Outcome.COMPLETED, files=files)
@@ -630,6 +635,8 @@ class DownloadTask:
 
         info = d.get("info_dict") or {}
         status = d.get("status")
+        if status == "downloading" and d.get("filename"):
+            self._downloaded_names.add(os.path.basename(d["filename"]))
         stream = None
         if len(info.get("requested_formats") or []) > 1:
             stream = "audio" if info.get("vcodec") in (None, "none") else "video"
@@ -679,6 +686,21 @@ class DownloadTask:
         message = next((m for key, m in _PP_MESSAGES.items() if name.startswith(key)), "後処理中…")
         index, count = self._playlist_position(d.get("info_dict") or {})
         self._emit(ProgressUpdate(Stage.PROCESSING, message=message, item_index=index, item_count=count), force=True)
+
+    def _remove_conversion_sources(self, existing_names: set, keep: list) -> None:
+        """MP3 に変換し終えた変換元 (今回ダウンロードして保存先へ移動されたもの) を消す.
+
+        開始前から保存先にあったファイルと完成品には触らない。
+        """
+        keep_paths = {os.path.normcase(os.path.abspath(p)) for p in keep}
+        for name in self._downloaded_names - existing_names:
+            path = os.path.join(self.request.output_dir, name)
+            if os.path.normcase(os.path.abspath(path)) in keep_paths or not os.path.isfile(path):
+                continue
+            try:
+                os.remove(path)
+            except OSError as exc:
+                self._log("warning", f"変換元ファイルを削除できませんでした: {exc}")
 
     @staticmethod
     def _collect_files(info: Optional[dict]) -> list:
