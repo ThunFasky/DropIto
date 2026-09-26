@@ -25,6 +25,23 @@ YouTube や X (旧Twitter) などの URL を貼り付けるだけで、動画を
 - 設定 (保存先・形式・画質など) を `%APPDATA%\DropIto\settings.json` に保存して次回に引き継ぎ
 - ダーク / ライト / システム連動のテーマ切り替え
 
+## すぐ使う (ビルド済み exe)
+
+Python が入っていなくても使えます。
+
+1. [`release/DropIto.exe`](release/DropIto.exe) をダウンロード (SHA256 は [`release/SHA256SUMS.txt`](release/SHA256SUMS.txt))
+2. ffmpeg と deno を入れる (PowerShell で 1 回だけ)
+   ```powershell
+   winget install Gyan.FFmpeg
+   winget install DenoLand.Deno
+   ```
+   winget を使わない場合は、`ffmpeg.exe` / `ffprobe.exe` / `deno.exe` を `DropIto.exe` と同じ場所の `bin\` フォルダーに置いても OK です。
+3. `DropIto.exe` をダブルクリック
+
+- 署名していない exe なので、初回は「Windows によって PC が保護されました」と出ることがあります。「詳細情報」→「実行」で起動できます。
+- ffmpeg は 1 ファイル 160MB 以上あって GitHub の上限 (100MB) を超えるため、ffmpeg / deno は exe に同梱していません。
+- この exe は yt-dlp 2026.08.19 / CustomTkinter 6.0.0 / PyInstaller 6.22.3 / Python 3.12 (64bit) でビルドしています。YouTube などでダウンロードできなくなったら、下の手順で yt-dlp を更新してビルドし直してください。
+
 ## 動作環境
 
 - Windows 10 / 11 (64bit)
