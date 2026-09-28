@@ -30,6 +30,7 @@ from enum import Enum
 from typing import Callable, Optional
 
 import yt_dlp
+from yt_dlp.postprocessor import PostProcessor
 from yt_dlp.utils import DownloadCancelled
 
 # ---------------------------------------------------------------------------
@@ -42,8 +43,10 @@ from yt_dlp.utils import DownloadCancelled
 OUTPUT_TEMPLATE = "%(title).120B [%(id)s].%(ext)s"
 
 #: 「タイトル -ダウンロード元URL」形式。URL の / : ? は Windows で使えないので
-#: yt-dlp が全角 (⧸ ： ？) に置き換える。パス長に収まるようタイトル 80 / URL 100 バイトで切る
-OUTPUT_TEMPLATE_WITH_URL = "%(title).80B -%(webpage_url).100B.%(ext)s"
+#: yt-dlp が全角 (⧸ ： ？) に置き換える。パス長に収まるようタイトル 80 / URL 100 バイトで切る。
+#: dropito_title は _FilenameFieldsPP が作る「末尾の #N を残して切ったタイトル」
+TITLE_BYTES_WITH_URL = 80
+OUTPUT_TEMPLATE_WITH_URL = "%(dropito_title,title).80B -%(webpage_url).100B.%(ext)s"
 
 #: Cookie を読み込めるブラウザ (yt-dlp の --cookies-from-browser と同じ名前)
 SUPPORTED_BROWSERS = ("firefox", "chrome", "edge", "brave", "opera", "vivaldi", "chromium")
@@ -95,6 +98,12 @@ _ERROR_HINTS = (
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
+# X (旧Twitter) の「…/status/123/video/2」「…/photo/1」。番号付きだとその 1 本しか落ちない
+_X_MEDIA_SUFFIX_RE = re.compile(
+    r"^(https?://(?:(?:www|mobile)\.)?(?:x|twitter|fxtwitter|vxtwitter|fixupx|fixvx)\.com/"
+    r"(?:i/web|i|[^/?#]+)/status(?:es)?/\d+)/(?:video|photo)/\d+/?",
+    re.IGNORECASE,
+)
 
 
 class MediaType(str, Enum):
@@ -145,6 +154,7 @@ class DownloadRequest:
     playlist: bool = False  # プレイリスト全体を保存
     cookies_browser: Optional[str] = None
     filename_with_url: bool = False  # ファイル名を「タイトル -ダウンロード元URL」にする
+    all_post_videos: bool = True  # 1 つの投稿に動画が複数あれば全部保存する
 
 
 @dataclass
@@ -258,6 +268,40 @@ def build_format_selection(request: DownloadRequest, has_ffmpeg: bool = True) ->
     # ffmpeg が無いと映像+音声を結合できないので、結合済みの単一ファイルを選ぶ
     fmt = "bv*+ba/b" if has_ffmpeg else "b[ext=mp4]/b"
     return fmt, sort
+
+
+def expand_post_url(url: str) -> str:
+    """投稿内の特定の動画を指す URL を、投稿全体の URL にする.
+
+    X では動画を開いて共有すると「…/status/123/video/1」になり、そのままだと
+    1 本しか保存されない。番号部分を外すと投稿内の動画がまとめて対象になる。
+    """
+    return _X_MEDIA_SUFFIX_RE.sub(r"\1", url.strip(), count=1)
+
+
+def fit_title(title: str, index: Optional[int] = None, count: Optional[int] = None,
+              limit: int = TITLE_BYTES_WITH_URL) -> str:
+    """タイトルを limit バイト (UTF-8) に収める.
+
+    複数動画の投稿やプレイリストでは末尾に " #番号" を必ず残す。同じ投稿の動画は
+    URL が同じなので、切ったときに番号まで消えるとファイル名がかぶってしまうため。
+    """
+    suffix = ""
+    if index and count and count > 1:
+        suffix = f" #{index}"
+        if title.endswith(suffix):
+            title = title[: -len(suffix)]
+    budget = max(limit - len(suffix.encode("utf-8")), 1)
+    return title.encode("utf-8")[:budget].decode("utf-8", "ignore") + suffix
+
+
+class _FilenameFieldsPP(PostProcessor):
+    """ファイル名を決める直前 (when="video") に dropito_title を用意する."""
+
+    def run(self, info):
+        count = info.get("n_entries") or info.get("playlist_count")
+        info["dropito_title"] = fit_title(info.get("title") or info.get("id") or "", info.get("playlist_index"), count)
+        return [], info
 
 
 def output_template(request: DownloadRequest) -> str:
@@ -413,6 +457,7 @@ def fetch_info(
     url: str,
     cookies_browser: Optional[str] = None,
     playlist: bool = False,
+    all_post_videos: bool = True,
     with_thumbnail: bool = True,
     logger: Optional[LogCallback] = None,
 ) -> MediaInfo:
@@ -423,6 +468,8 @@ def fetch_info(
     url = url.strip()
     if not is_valid_url(url):
         raise ValueError(f"{url!r} is not a valid URL")
+    if all_post_videos:
+        url = expand_post_url(url)
 
     opts = {
         "skip_download": True,
@@ -573,10 +620,17 @@ class DownloadTask:
         _hide_path(temp_dir)
         opts["paths"]["temp"] = temp_dir
 
+        url = request.url.strip()
+        if request.all_post_videos and expand_post_url(url) != url:
+            url = expand_post_url(url)
+            self._log("info", f"投稿内のすべての動画を保存します: {url}")
+
         self._emit(ProgressUpdate(Stage.PREPARING, message="動画情報を取得中…"), force=True)
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(request.url, download=True)
+                if request.filename_with_url:
+                    ydl.add_post_processor(_FilenameFieldsPP(), when="video")
+                info = ydl.extract_info(url, download=True)
             if self.cancel_requested:
                 raise UserCancelled()
         except Exception as exc:
@@ -770,6 +824,8 @@ def _cli(argv: Optional[list] = None) -> int:
     parser.add_argument("--playlist", action="store_true", help="プレイリスト全体を保存")
     parser.add_argument("--cookies-from-browser", choices=SUPPORTED_BROWSERS)
     parser.add_argument("--url-in-name", action="store_true", help="ファイル名を「タイトル -ダウンロード元URL」にする")
+    parser.add_argument("--single-video", action="store_true",
+                        help="「…/video/2」のような URL で、投稿内のその 1 本だけを保存する")
     parser.add_argument("--info", action="store_true", help="情報を表示するだけ")
     args = parser.parse_args(argv)
 
@@ -778,7 +834,8 @@ def _cli(argv: Optional[list] = None) -> int:
             print(f"\n[{level}] {message}", file=sys.stderr)
 
     if args.info:
-        info = fetch_info(args.url, cookies_browser=args.cookies_from_browser, playlist=args.playlist, logger=log)
+        info = fetch_info(args.url, cookies_browser=args.cookies_from_browser, playlist=args.playlist,
+                          all_post_videos=not args.single_video, logger=log)
         print(f"タイトル : {info.title}")
         print(f"投稿者   : {info.uploader}")
         print(f"長さ     : {format_duration(info.duration)}")
@@ -808,6 +865,7 @@ def _cli(argv: Optional[list] = None) -> int:
         playlist=args.playlist,
         cookies_browser=args.cookies_from_browser,
         filename_with_url=args.url_in_name,
+        all_post_videos=not args.single_video,
     )
     result = DownloadTask(request, on_progress=progress, on_log=log).run()
     print()

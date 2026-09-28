@@ -20,6 +20,7 @@ import downloader as dl
 from downloader import DownloadRequest, DownloadTask, MediaType, Outcome, Stage
 
 X_URL = "https://x.com/captainamerica/status/719944021058060289"  # 3 秒の動画付きポスト
+X_MULTI = "https://x.com/UltimaShadowX/status/1577719286659006464"  # 動画 4 本のポスト
 YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"  # Me at the zoo (19 秒)
 DIRECT_SMALL = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"
 DIRECT_LARGE = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_30MB.mp4"
@@ -92,7 +93,7 @@ class TestOptions:
         plain = dl.build_ydl_options(DownloadRequest("https://a.b/c", "."), ffmpeg_path="ffmpeg")
         with_url = dl.build_ydl_options(DownloadRequest("https://a.b/c", ".", filename_with_url=True), ffmpeg_path="ffmpeg")
         assert plain["outtmpl"]["default"] == "%(title).120B [%(id)s].%(ext)s"
-        assert with_url["outtmpl"]["default"] == "%(title).80B -%(webpage_url).100B.%(ext)s"
+        assert with_url["outtmpl"]["default"] == "%(dropito_title,title).80B -%(webpage_url).100B.%(ext)s"
 
     def test_filename_with_url_is_windows_safe(self):
         import yt_dlp
@@ -125,6 +126,42 @@ class TestOptions:
 # ---------------------------------------------------------------------------
 # オフライン: ヘルパー
 # ---------------------------------------------------------------------------
+
+
+class TestMultiVideoPost:
+    @pytest.mark.parametrize("url, expected", [
+        ("https://x.com/u/status/123/video/2", "https://x.com/u/status/123"),
+        ("https://x.com/u/status/123/photo/1?s=20", "https://x.com/u/status/123?s=20"),
+        ("https://twitter.com/u/status/123/video/1/", "https://twitter.com/u/status/123"),
+        ("https://mobile.twitter.com/u/status/123/video/3", "https://mobile.twitter.com/u/status/123"),
+        ("https://x.com/i/status/123/video/1", "https://x.com/i/status/123"),
+        ("https://x.com/i/web/status/123/video/1", "https://x.com/i/web/status/123"),
+        ("  https://x.com/u/status/123  ", "https://x.com/u/status/123"),
+        ("https://x.com/u/status/123", "https://x.com/u/status/123"),
+        ("https://www.youtube.com/watch?v=abc&list=PL1", "https://www.youtube.com/watch?v=abc&list=PL1"),
+        ("https://example.com/u/status/123/video/2", "https://example.com/u/status/123/video/2"),
+    ])
+    def test_expand_post_url(self, url, expected):
+        assert dl.expand_post_url(url) == expected
+
+    def test_fit_title_short(self):
+        assert dl.fit_title("abc") == "abc"
+        assert dl.fit_title("abc #2", index=2, count=4) == "abc #2"
+
+    def test_fit_title_keeps_index_when_truncated(self):
+        long = "User - " + "あ" * 60 + " #3"
+        fitted = dl.fit_title(long, index=3, count=4)
+        assert fitted.endswith("あ #3")
+        assert len(fitted.encode("utf-8")) <= dl.TITLE_BYTES_WITH_URL
+        fitted.encode("utf-8").decode("utf-8")  # マルチバイト文字の途中で切れていない
+
+    def test_fit_title_adds_index_for_playlists(self):
+        assert dl.fit_title("x" * 200, index=12, count=40).endswith("x #12")
+        assert dl.fit_title("x" * 200, index=1, count=1) == "x" * dl.TITLE_BYTES_WITH_URL
+
+    def test_filename_fields_pp(self):
+        _, info = dl._FilenameFieldsPP().run({"title": "t" * 100 + " #2", "playlist_index": 2, "n_entries": 4})
+        assert info["dropito_title"].endswith("t #2")
 
 
 class TestHelpers:
@@ -347,6 +384,24 @@ class TestDownload:
         assert " -https" in name and "x.com⧸captainamerica⧸status⧸719944021058060289" in name
         assert name.endswith(".mp4")
         assert os.listdir(tmp_path) == [name]
+
+    def test_x_video_url_downloads_whole_post(self, tmp_path):
+        # 「…/video/2」の URL でも、投稿内の 4 本をまとめて保存する (URL 付きの名前でもかぶらない)
+        req = DownloadRequest(X_MULTI + "/video/2", str(tmp_path), embed_thumbnail=False, filename_with_url=True)
+        result, updates, _ = run_task(req)
+        assert result.outcome is Outcome.COMPLETED, result.error
+        names = sorted(os.path.basename(p) for p in result.files)
+        assert names == [f"Ultima - Test #{i} -https：⧸⧸x.com⧸UltimaShadowX⧸status⧸1577719286659006464.mp4"
+                         for i in range(1, 5)]
+        assert sorted(os.listdir(tmp_path)) == names
+        assert {(u.item_index, u.item_count) for u in updates if u.item_count} >= {(1, 4), (4, 4)}
+
+    def test_x_single_video_mode(self, tmp_path):
+        req = DownloadRequest(X_MULTI + "/video/2", str(tmp_path), embed_thumbnail=False, all_post_videos=False)
+        result, _, _ = run_task(req)
+        assert result.outcome is Outcome.COMPLETED, result.error
+        (path,) = result.files
+        assert "[1577719236201414657]" in path  # 2 本目の動画
 
     def test_x_mp3_leaves_only_mp3(self, tmp_path):
         result, _, _ = run_task(DownloadRequest(X_URL, str(tmp_path), media_type=MediaType.AUDIO))

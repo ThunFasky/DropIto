@@ -17,6 +17,7 @@ YouTube や X (旧Twitter) などの URL を貼り付けるだけで、動画を
   - **H.264 優先**: AV1 / VP9 より H.264 + AAC を優先 (AviUtl などの編集ソフトで読み込みやすい)
   - サムネイル・メタデータの埋め込み (MP3 のジャケット画像にもなる)
   - プレイリスト全体のダウンロード
+  - **投稿内の動画をすべてダウンロード**: 1 つの投稿に動画が複数あればまとめて保存 (X で動画を共有したときの `…/status/123/video/2` のような URL でも投稿全体を保存)
   - ブラウザの Cookie 利用 (ボット判定やログインが必要な動画向け)
   - ファイル名にダウンロード元 URL を付ける (`タイトル -URL.mp4` 形式。オン/オフ切り替え可)
 - 保存先フォルダーの選択ダイアログ (初期値は Windows の「ダウンロード」フォルダー)
@@ -145,6 +146,7 @@ python build.py                 # ffmpeg / deno も最新にするなら --force
 | オフ | `Me at the zoo [jNQXAC9IVRw].mp4` |
 
 URL の `/` `:` `?` は Windows のファイル名に使えないため、全角の `⧸` `：` `？` に置き換わります。パスが長くなりすぎないよう、オンのときはタイトルを 80 バイト・URL を 100 バイトまでで切ります。
+1 つの投稿に動画が複数ある場合は URL が同じになるので、タイトルを切っても末尾の `#1` `#2` … は必ず残して区別します (例: `Ultima - Test #2 -https：⧸⧸x.com⧸…⧸status⧸1577719286659006464.mp4`)。
 
 ダウンロード中の途中ファイルは保存先の中の隠しフォルダー `.dropito-tmp-…` に置かれ、完了・失敗・キャンセルのどの場合も最後に削除されます。
 
@@ -197,6 +199,7 @@ python downloader.py "https://x.com/…/status/…" -o out           # MP4 (最�
 python downloader.py "https://youtu.be/…" --height 1080 --h264   # 1080p まで・H.264 優先
 python downloader.py "https://youtu.be/…" --mp3 --bitrate 320    # MP3 320kbps
 python downloader.py "https://x.com/…/status/…" --url-in-name    # ファイル名を「タイトル -URL」に
+python downloader.py "https://x.com/…/status/…/video/2" --single-video  # 投稿内のその 1 本だけ
 ```
 
 ### テスト

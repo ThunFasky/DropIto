@@ -56,6 +56,7 @@ class Settings:
     playlist: bool = False
     cookies_browser: str = ""  # "" = 使わない
     filename_with_url: bool = True  # ファイル名を「タイトル -ダウンロード元URL」にする
+    all_post_videos: bool = True  # 1 つの投稿に動画が複数あれば全部保存する
     appearance: str = "dark"  # "dark" / "light" / "system"
 
     @classmethod

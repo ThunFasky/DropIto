@@ -104,8 +104,8 @@ class DropItoApp(ctk.CTk):
         super().__init__()
 
         self.title(f"{APP_NAME} - 動画・音声ダウンローダー")
-        self.geometry("820x840")
-        self.minsize(700, 760)
+        self.geometry("820x870")
+        self.minsize(700, 790)
         self._set_window_icon()
 
         self._events: "queue.Queue[tuple]" = queue.Queue()
@@ -258,6 +258,7 @@ class DropItoApp(ctk.CTk):
         self.embed_var = tk.BooleanVar()
         self.playlist_var = tk.BooleanVar()
         self.url_name_var = tk.BooleanVar()
+        self.all_videos_var = tk.BooleanVar()
         check_opts = {"font": self.font_small, "checkbox_width": 20, "checkbox_height": 20}
         self.h264_check = ctk.CTkCheckBox(
             checks, text="H.264 優先 (AviUtl など編集ソフト向け)", variable=self.h264_var, **check_opts)
@@ -272,6 +273,10 @@ class DropItoApp(ctk.CTk):
         self.url_name_check = ctk.CTkCheckBox(
             checks, text="ファイル名にダウンロード元 URL を付ける", variable=self.url_name_var, **check_opts)
         self.url_name_check.grid(row=1, column=1, sticky="w")
+        self.all_videos_check = ctk.CTkCheckBox(
+            checks, text="投稿内の動画をすべてダウンロード", variable=self.all_videos_var,
+            command=lambda: self._schedule_preview(delay=0), **check_opts)
+        self.all_videos_check.grid(row=2, column=0, sticky="w", pady=(6, 0))
 
         ctk.CTkLabel(opts, text="Cookie", **label_opts).grid(row=2, **head)
         cookie_row = ctk.CTkFrame(opts, fg_color="transparent")
@@ -373,6 +378,7 @@ class DropItoApp(ctk.CTk):
         self.embed_var.set(s.embed_thumbnail)
         self.playlist_var.set(s.playlist)
         self.url_name_var.set(s.filename_with_url)
+        self.all_videos_var.set(s.all_post_videos)
         self.cookie_menu.set(self._label_for(COOKIE_BROWSERS, s.cookies_browser, "使用しない"))
         self.appearance_menu.set(self._label_for(APPEARANCES, s.appearance, "ダーク"))
         self.output_var.set(s.output_dir)
@@ -386,6 +392,7 @@ class DropItoApp(ctk.CTk):
         s.embed_thumbnail = self.embed_var.get()
         s.playlist = self.playlist_var.get()
         s.filename_with_url = self.url_name_var.get()
+        s.all_post_videos = self.all_videos_var.get()
         s.cookies_browser = COOKIE_BROWSERS[self.cookie_menu.get()]
         s.appearance = APPEARANCES[self.appearance_menu.get()]
         s.output_dir = self.output_var.get().strip() or s.output_dir
@@ -504,6 +511,7 @@ class DropItoApp(ctk.CTk):
             lambda info, error: self._events.put(("preview", (token, info, error))),
             cookies_browser=COOKIE_BROWSERS[self.cookie_menu.get()] or None,
             playlist=self.playlist_var.get(),
+            all_post_videos=self.all_videos_var.get(),
         )
 
     def _show_preview_placeholder(self, message: str = "", error: bool = False) -> None:
@@ -527,14 +535,20 @@ class DropItoApp(ctk.CTk):
         parts = []
         if info.uploader:
             parts.append(info.uploader)
-        if info.is_playlist:
+        # X などの「1 つの投稿に複数の動画」も yt-dlp ではプレイリスト扱いになる
+        is_post = info.is_playlist and info.extractor.lower() == "twitter"
+        if is_post:
+            parts.append(f"この投稿の動画 {info.entry_count or '?'} 本")
+        elif info.is_playlist:
             parts.append(f"プレイリスト {info.entry_count or '?'} 件")
         elif info.duration:
             parts.append(f"長さ {format_duration(info.duration)}")
         if info.extractor:
             parts.append(info.extractor)
         self.meta_label.configure(text="  •  ".join(parts))
-        if info.is_playlist:
+        if is_post:
+            status = f"投稿内の動画 {info.entry_count or '全'} 本をまとめてダウンロードします"
+        elif info.is_playlist:
             status = f"プレイリストの {info.entry_count or '全'} 件をダウンロードします"
         else:
             status = "ダウンロードできます"
@@ -600,6 +614,7 @@ class DropItoApp(ctk.CTk):
             embed_thumbnail=s.embed_thumbnail,
             playlist=s.playlist,
             filename_with_url=s.filename_with_url,
+            all_post_videos=s.all_post_videos,
             cookies_browser=s.cookies_browser or None,
         )
         self._task = DownloadTask(
@@ -628,7 +643,8 @@ class DropItoApp(ctk.CTk):
         state = "disabled" if busy else "normal"
         for widget in (
             self.url_entry, self.paste_btn, self.clear_btn, self.format_switch, self.quality_menu,
-            self.h264_check, self.embed_check, self.playlist_check, self.url_name_check, self.cookie_menu,
+            self.h264_check, self.embed_check, self.playlist_check, self.url_name_check,
+            self.all_videos_check, self.cookie_menu,
             self.output_entry, self.browse_btn, self.download_btn,
         ):
             widget.configure(state=state)

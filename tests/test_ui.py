@@ -109,12 +109,14 @@ def test_settings_roundtrip(app, tmp_path):
     app.cookie_menu.set("Firefox")
     app.output_var.set(str(tmp_path))
     assert app.url_name_var.get() is True  # 既定はオン
+    assert app.all_videos_var.get() is True
     app.url_name_var.set(False)
+    app.all_videos_var.set(False)
     app._save_settings()
 
     loaded = Settings.load()
     assert (loaded.media_type, loaded.audio_bitrate, loaded.cookies_browser, loaded.output_dir,
-            loaded.filename_with_url) == ("mp3", 192, "firefox", str(tmp_path), False)
+            loaded.filename_with_url, loaded.all_post_videos) == ("mp3", 192, "firefox", str(tmp_path), False, False)
 
 
 def test_stage_change_is_not_coalesced_away(app):
